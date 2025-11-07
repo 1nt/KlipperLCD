@@ -220,7 +220,7 @@ class LCD:
     def write(self, data, eol=True, lf=False):
         dat = bytearray()
         if type(data) == str:
-            dat.extend(map(ord, data))
+            dat.extend(data.encode("utf-8"))
         else:
             dat.extend(data)
 
