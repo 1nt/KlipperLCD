@@ -11,7 +11,7 @@ from lcd import LCD, _printerData
 
 class KlipperLCD ():
     def __init__(self):
-        self.lcd = LCD("/dev/ttyAMA0", callback=self.lcd_callback)
+        self.lcd = LCD("/dev/ttyS2", callback=self.lcd_callback)
         self.lcd.start()
         self.printer = PrinterData('XXXXXX', URL=("127.0.0.1"), callback=self.printer_callback)
         self.running = False
@@ -241,3 +241,4 @@ class KlipperLCD ():
 if __name__ == "__main__":
     x = KlipperLCD()
     x.start()
+
