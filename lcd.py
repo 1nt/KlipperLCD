@@ -158,7 +158,7 @@ class LCD:
         self.ser = serial.Serial()
         self.ser.port = port
         self.ser.baudrate = baud
-        self.ser.timeout = None
+        self.ser.timeout = 0.5
         self.running = False
         self.rx_buf = bytearray()
         self.rx_data_cnt = 0
@@ -220,7 +220,7 @@ class LCD:
     def write(self, data, eol=True, lf=False):
         dat = bytearray()
         if type(data) == str:
-            dat.extend(data.encode("utf-8"))
+           dat.extend(data.encode("utf-8"))
         else:
             dat.extend(data)
 
@@ -458,7 +458,13 @@ class LCD:
 
     def run(self):
         while self.running:
-                incomingByte = self.ser.read(1)
+                try:
+                    incomingByte = self.ser.read(1)
+                except Exception:
+                    sleep(0.05)
+                    continue
+                if not incomingByte:
+                    continue
                 #
                 if self.rx_state == RX_STATE_IDLE:
                     if incomingByte[0] == FHONE:

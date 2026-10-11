@@ -1,14 +1,18 @@
 [Unit]
- Description=KlipperLCD Service
- After=moonraker.service
+Description=KlipperLCD Service for Elegoo Neptune LCD
+After=moonraker.service
+Wants=moonraker.service
 
 [Service]
- Type=simple
- User=pi
- Restart=always
- RestartSec=1
- ExecStart=/bin/sh -c '/usr/bin/env python3 /home/pi/KlipperLCD/main.py  > /tmp/KlipperLCD.log 2>&1'
+Type=simple
+User=pi
+Restart=always
+RestartSec=2
+# Optional environment variables:
+# Environment="KLIPPER_LCD_PORT=/dev/ttyS2"
+# Environment="MOONRAKER_API_KEY=your_moonraker_api_key"
+# Environment="MOONRAKER_URL=127.0.0.1"
+ExecStart=/bin/sh -c 'exec /usr/bin/env python3 /home/pi/KlipperLCD/main.py > /tmp/KlipperLCD.log 2>&1'
 
 [Install]
- WantedBy=multi-user.target
-
+WantedBy=multi-user.target

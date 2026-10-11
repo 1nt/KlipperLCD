@@ -1,164 +1,246 @@
-# KlipperLCD (for Elegoo Neptune 3 Pro LCD screen)
-Want to run Klipper on your Neptune 3 Pro? And still want to be able to use your Neptune 3 Pro LCD touch screen?
+# KlipperLCD (for Elegoo Neptune 3 Pro / Plus / Max LCD screens)
 
-Take a look at this python service for the Elegoo Neptune 3 Pro LCD! Running together with Klipper3d and Moonraker!
+Want to run Klipper on your Elegoo Neptune 3 Pro / Plus / Max and still use the native touchscreen?
 
-## Look and feel
-<p float="left">
-    <img src="img/boot_screen.PNG" height="400">
-    <img src="img/main_screen.PNG" height="400">
-    <img src="img/about_screen.PNG" height="400">
-</p>
+**KlipperLCD** is a Python service connecting the Elegoo Neptune 3 DWIN/DGUS LCD touchscreen directly to [Klipper](https://www.klipper3d.org/) and [Moonraker](https://moonraker.readthedocs.io/).
 
-## Whats needed?
-* A Elegoo Neptune 3 Pro with LCD screen.
-* A Raspberry Pi or similar SBC to run Klipper. I suggest using the [Klipper Installation And Update Helper (KIAUH)](https://github.com/dw-0/kiauh) to setup and install Klipper, Moonraker and the web user interface of choice ([Fluidd](https://docs.fluidd.xyz/)/[Mainsail](https://docs.mainsail.xyz/)).
-* Some re-wiring of the LCD screen to connect it to one of the UARTs availible on your Raspberry Pi / SBC or through a USB to UART converter.
-* Then you can follow this guide to enable your Neptune 3 Pro touch screen!
+---
 
-## Wire the LCD
-When wiring your screen, you can either wire it directly to one of your Raspberry Pi / SBC availible UARTs or you can wire it through a USB to UART converter. Both options are described below, pick the option that suits your needs.
-
-### To a Raspberry Pi UART
-1. Remove the back-cover of the LCD by unscrewing the four screws.
-
-2. Connect the LCD to the Raspberry Pi UART according to the table below:
-
-    | Raspberry Pi  | LCD               |
-    | ------------- | ----------------- |
-    | Pin 4 (5V)    | 5V  (Black wire)  |
-    | Pin 6 (GND)   | GND (Red wire)    |
-    | GPIO 14 (TXD) | RX  (Green wire)  |
-    | GPIO 15 (RXD) | TX (Yellow wire)  |
-
-    <p float="left">
-        <img src="img/rpi_conn.png" height="400">
-        <img src="img/LCD_conn.png" height="400">
-    </p>
-
-### USB to UART Converter
-Quite simple, just remember to cross RX and TX on the LCD and the USB/UART HW.
-| USB <-> UART HW | LCD               |
-| --------------- | ----------------- |
-| 5V              | 5V  (Black wire)  |
-| GND             | GND (Red wire)    |
-| TXD             | RX  (Green wire)  |
-| RXD             | TX (Yellow wire)  |
+## Features
+* **Full Touchscreen Control**: Axis jogging, homing, temperatures, baby-stepping (Z-offset), fan & LED control, bed mesh calibration.
+* **G-Code Console & Macros**: Send commands, run macros from a dropdown menu, and see Klipper output in real time.
+* **Network & Wi-Fi Management (NEW)**:
+  * View host IP addresses directly on the screen (`GET_IP`).
+  * Display Wi-Fi signal strength and connection status (`WIFI_STATUS`).
+  * Scan nearby Wi-Fi networks with signal level in dBm (`WIFI_SCAN`).
+  * Connect to Wi-Fi by network index (`WIFI_CONNECT ID=1 PASS="secret"`) or by SSID (`WIFI_CONNECT SSID="MyHome" PASS="secret"`).
+  * Auto-reconnect & fallback to the previous network if connection fails.
+* **G-code Thumbnail Support**: Renders sliced model thumbnails during printing.
+* **Configurable via CLI & Environment**: Set serial port, baud rate, Moonraker URL, and API key via command-line flags or environment variables without editing code.
 
 <p float="left">
-    <img src="img/USB_conn.png" height="400">
-    <img src="img/LCD_conn.png" height="400">
+    <img src="img/boot_screen.PNG" height="300">
+    <img src="img/main_screen.PNG" height="300">
+    <img src="img/about_screen.PNG" height="300">
 </p>
 
-## Update the LCD screen firmware
-1. Copy the LCD screen firmware `LCD/20240125.tft` to the root of a FAT32 formatted micro-SD card.
-2. Make sure the LCD screen is powered off.
-3. Insert the micro-SD card into the LCD screens SD card holder. Back-cover needs to be removed.
-4. Power on the LCD screen and wait for screen to say `Update Successed!`
+---
 
-A more detailed guide on LCD screen firmware update can be found on the [Elegoo web-pages](https://www.elegoo.com/blogs/3d-printing/elegoo-neptune-3-pro-plus-max-fdm-3d-printer-support-files).
+## Hardware Requirements
+1. **Elegoo Neptune 3 LCD Touchscreen** (Pro, Plus, or Max).
+2. **Host SBC / Single Board Computer**: Raspberry Pi, Orange Pi, TV-box (Rockchip/Amlogic), or any Linux PC running Klipper.
+3. **Serial Connection**:
+   * Direct wiring to an available SBC UART (e.g., `/dev/ttyAMA0`, `/dev/ttyS2`).
+   * **OR** via a USB-to-UART converter (CH340, CP2102, FTDI) showing up as `/dev/ttyUSB0`.
 
+---
 
-## Enable the UART
-> **_Note_**: You can safely skip this section if you wired the display through a USB to UART converter
-### [Disable Linux serial console](https://www.raspberrypi.org/documentation/configuration/uart.md)
-  By default, the primary UART is assigned to the Linux console. If you wish to use the primary UART for other purposes, you must reconfigure Raspberry Pi OS. This can be done by using raspi-config:
+## 1. Wiring the LCD
 
-  * Start raspi-config: `sudo raspi-config.`
-  * Select option 3 - Interface Options.
-  * Select option P6 - Serial Port.
-  * At the prompt Would you like a login shell to be accessible over serial? answer 'No'
-  * At the prompt Would you like the serial port hardware to be enabled? answer 'Yes'
-  * Exit raspi-config and reboot the Pi for changes to take effect.
-  
-  For full instructions on how to use Device Tree overlays see [this page](https://www.raspberrypi.org/documentation/configuration/device-tree.md). 
-  
-  In brief, add a line to the `/boot/config.txt` file to apply a Device Tree overlay.
-    
-    dtoverlay=disable-bt
+Remove the back-cover of the LCD by unscrewing the four screws.
 
-## Run the KlipperLCD service
-* SSH into your Raspberry Pi
+### Option A: Direct UART on Raspberry Pi / SBC
+| SBC Pin | LCD Wire Color | LCD Signal |
+| :--- | :--- | :--- |
+| **Pin 4 (5V)** | Black | 5V |
+| **Pin 6 (GND)** | Red | GND |
+| **GPIO 14 (TXD)** | Green | RX |
+| **GPIO 15 (RXD)** | Yellow | TX |
 
-### Klipper socket API
-* Make sure Klipper's API socket is enabled by reading the Klipper arguments.
+<p float="left">
+    <img src="img/rpi_conn.png" height="300">
+    <img src="img/LCD_conn.png" height="300">
+</p>
 
-    Command:
+### Option B: USB-to-UART Converter
+Cross RX and TX between the converter and the LCD:
+| USB-UART Adapter | LCD Wire Color | LCD Signal |
+| :--- | :--- | :--- |
+| **5V** | Black | 5V |
+| **GND** | Red | GND |
+| **TXD** | Green | RX |
+| **RXD** | Yellow | TX |
 
-        cat ~/printer_data/systemd/klipper.env
+<p float="left">
+    <img src="img/USB_conn.png" height="300">
+    <img src="img/LCD_conn.png" height="300">
+</p>
 
-    Response:
+---
 
-        KLIPPER_ARGS="/home/pi/klipper/klippy/klippy.py /home/pi/printer_data/config/printer.cfg -I /home/pi/printer_data/comms/klippy.serial -l /home/pi/printer_data/logs/klippy.log -a /home/pi/printer_data/comms/klippy.sock"
-    
-    The KLIPPER_ARGS should include `-a /home/pi/printer_data/comms/klippy.sock`. If not add it to the klipper.env file!
+## 2. Flash LCD Screen Firmware
 
-### Install dependencies
-    sudo apt-get install python3-pip git
-    pip install pyserial
+1. Format a micro-SD card (<= 32GB) as **FAT32** with 4096-byte allocation size.
+2. Copy the firmware file `LCD/20240125.tft` (or `20240129.tft`) to the root of the micro-SD card.
+3. Turn off power to the LCD.
+4. Insert the micro-SD card into the slot located on the back of the LCD board.
+5. Power on the LCD. Wait until the screen displays **`Update Successed!`**.
+6. Power off, remove the micro-SD card, and reinstall the back cover.
 
-### Get the code
-    git clone https://github.com/joakimtoe/KlipperLCD
-    cd KlipperLCD
+---
 
-### Configure the code
-* Open `main.py` and find the `class KlipperLCD` declaration:
-```python
-class KlipperLCD ():
-    def __init__(self):
-        ...
-        LCD("/dev/ttyAMA0", callback=self.lcd_callback)
-        ...
+## 3. Configure Klipper Host
+
+### A. Enable Klipper Unix Domain Socket
+Verify that Klipper provides the API socket `/home/<user>/printer_data/comms/klippy.sock`:
+
+```bash
+cat ~/printer_data/systemd/klipper.env
 ```
-* If your UART is something other than the default `ttyAMA0`, replace the string `"/dev/ttyAMA0"` to match your UART selection. 
+Ensure `KLIPPER_ARGS` contains `-a /home/<user>/printer_data/comms/klippy.sock`. If missing, add it and restart Klipper (`sudo systemctl restart klipper`).
 
+### B. Add Network Macros to Klipper
+Copy `network_macros.cfg` to your Klipper configuration folder:
+```bash
+cp network_macros.cfg ~/printer_data/config/
+```
+In your `printer.cfg`, add:
+```gcode
+[include network_macros.cfg]
+```
+Also ensure `[respond]` is present in your config (included automatically if you use `mainsail.cfg` or `fluidd.cfg`).
 
-    > **_Note_**: If using a USB to UART converter to connect your screen to Klipper, the converter usually shows up in Linux as `"/dev/ttyUSB0"`.
+Restart Klipper to load the macros:
+```bash
+curl -X POST http://127.0.0.1:7125/printer/restart
+```
 
+---
 
-### Run the code
-Once the LCD touch screen is wired to the Raspberry Pi, Klipper socket API is enabled and the KlipperLCD class is configured according to your wiring you can fire up the code!
+## 4. Install KlipperLCD on Another Printer / SBC
 
-    python3 main.py
+### A. Clone Repository & Install Dependencies
+```bash
+cd ~
+git clone https://github.com/1nt/KlipperLCD.git
+cd KlipperLCD
 
-Congratulations! You can now use the touch screen!
+# Install Python requirements (using system Python or your Klipper virtualenv)
+pip install pyserial requests
+```
 
-### Run KlipperLCD service at boot
-If the path of `main.py` is something else than `/home/pi/KlipperLCD/main.py` or your user is not `pi`. Open and edit `KlipperLCD.service` to fit your needs.
+### B. Find your Moonraker API Key
+In **Mainsail** or **Fluidd**:
+1. Click the **Settings (Gear icon)**.
+2. Open the **Security** tab.
+3. Copy your **API Key**.
 
-Enable the service to automatically start at boot:
+*(Alternatively, ensure `127.0.0.1` is in `trusted_clients` inside `moonraker.conf`).*
 
-    sudo chmod +x main.py
+---
 
-    sudo chmod +x KlipperLCD.service
+## 5. Test Run
 
-    sudo mv KlipperLCD.service /etc/systemd/system/KlipperLCD.service
+Launch KlipperLCD from the terminal:
 
-    sudo chmod 644 /etc/systemd/system/KlipperLCD.service
+```bash
+# Using CLI arguments:
+python3 main.py --port /dev/ttyUSB0 --api-key YOUR_MOONRAKER_KEY
 
-    sudo systemctl daemon-reload
+# Or using environment variables:
+export KLIPPER_LCD_PORT="/dev/ttyS2"
+export MOONRAKER_API_KEY="YOUR_MOONRAKER_KEY"
+python3 main.py
+```
 
-    sudo systemctl enable KlipperLCD.service
+### Command Line Options
+| Flag | Environment Variable | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--port` | `KLIPPER_LCD_PORT` | `/dev/ttyS2` | Serial port connected to LCD |
+| `--baud` | `KLIPPER_LCD_BAUD` | `115200` | Baud rate |
+| `--api-key` | `MOONRAKER_API_KEY` | *(empty)* | Moonraker API Key |
+| `--url` | `MOONRAKER_URL` | `127.0.0.1` | Moonraker host URL |
+| `--wifi-iface`| `KLIPPER_LCD_WIFI` | *(auto)* | Wireless interface name |
 
-    sudo reboot
+---
 
-## Console
-The console is enabled by default and can be accessed by clicking center top of the main screen or by clicking the thumbnail area while printing.
+## 6. Install as a System Service (Auto-start on Boot)
 
-The console enables sending commands and will display all gcode responses and information from Klipper normally found in the console tab in Mainsail or Fluidd.
+1. Open `KlipperLCD.service` and adjust `User` and paths to match your system:
+```ini
+[Unit]
+Description=KlipperLCD Service for Elegoo Neptune LCD
+After=moonraker.service
+Wants=moonraker.service
 
-<p float="left">
-    <img src="img/console.PNG" height="400">
-    <img src="img/console_key.PNG" height="400">
-    <img src="img/console_num.PNG" height="400">
-</p>
+[Service]
+Type=simple
+User=pi
+Restart=always
+RestartSec=2
+# Optional overrides:
+# Environment="KLIPPER_LCD_PORT=/dev/ttyUSB0"
+# Environment="MOONRAKER_API_KEY=YOUR_KEY"
+ExecStart=/bin/sh -c 'exec /home/pi/klippy-env/bin/python /home/pi/KlipperLCD/main.py --port /dev/ttyUSB0 --api-key YOUR_KEY > /tmp/KlipperLCD.log 2>&1'
 
-## Thumbnails
-KlipperLCD also supports thumbnails!
+[Install]
+WantedBy=multi-user.target
+```
 
-Follow this guide to enable thumbnails in your slicer: https://klipperscreen.readthedocs.io/en/latest/Thumbnails/
+2. Install and enable the service:
+```bash
+sudo cp KlipperLCD.service /etc/systemd/system/KlipperLCD.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now KlipperLCD.service
+```
 
-<p float="left">
-    <img src="img/thumb1.png" height="400">
-    <img src="img/thumb2.png" height="400">
-</p>
+3. Check logs:
+```bash
+tail -f /tmp/KlipperLCD.log
+```
+
+---
+
+## 7. Using Network & Wi-Fi Features
+
+All network commands can be executed from the **Console** page on the touchscreen, selected from the **Macros dropdown**, or triggered from Mainsail/Fluidd.
+
+### Display IP Addresses
+Command: `GET_IP` (or `IP`)
+```text
+--- Network IP ---
+wlan0: 192.168.1.104 (OpenWrt, -42dBm)
+end0: Disconnected
+Host: sb214
+```
+
+### Check Wi-Fi Status
+Command: `WIFI_STATUS`
+```text
+--- WiFi Status ---
+SSID: OpenWrt
+IP: 192.168.1.104
+State: COMPLETED (-41dBm)
+MAC: e0:76:d0:3b:6a:7d
+```
+
+### Scan Wi-Fi Networks
+Command: `WIFI_SCAN`
+```text
+Scanning WiFi networks...
+--- WiFi Networks ---
+1: Keenetic (-34dBm)
+2: OpenWrt (-39dBm)
+3: MyOffice (-45dBm)
+4: HomeRouter (-64dBm)
+Use: WIFI_CONNECT ID=1 PASS=...
+```
+
+### Connect to Wi-Fi
+You can connect easily using the numbered ID from the scan (no need to type a long SSID on the touchscreen!):
+```text
+WIFI_CONNECT ID=1 PASS="secret_password"
+```
+Or by network name:
+```text
+WIFI_CONNECT SSID="Keenetic" PASS="secret_password"
+```
+*(For open networks without a password, omit the `PASS` parameter).*
+
+* If connection succeeds, the IP is printed and saved to `/etc/netplan/30-wifis-dhcp.yaml` to persist across reboots.
+* If connection fails (wrong password / timeout), KlipperLCD automatically reverts to the previous network so the printer never loses connection.
+
+---
+
+## License
+Apache-2.0 License. Based on [joakimtoe/KlipperLCD](https://github.com/joakimtoe/KlipperLCD).

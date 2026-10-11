@@ -96,7 +96,7 @@ class KlippySocket:
 		self.stop_threads = False
 		self.poll.register(self.webhook_socket, select.POLLIN | select.POLLHUP)
 		self.socket_data = ""
-		self.t = threading.Thread(target=self.polling)
+		self.t = threading.Thread(target=self.polling, daemon=True)
 		self.callback = callback
 		self.lines = []
 		self.t.start()
