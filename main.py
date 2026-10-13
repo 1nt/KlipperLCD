@@ -25,7 +25,7 @@ def parse_args():
     )
     parser.add_argument(
         "--api-key",
-        default=os.environ.get("MOONRAKER_API_KEY", "c3f224c59e2f418e908b1ceb93fb912e"),
+        default=os.environ.get("MOONRAKER_API_KEY", ""),
         help="Moonraker API key (default: $MOONRAKER_API_KEY)"
     )
     parser.add_argument(

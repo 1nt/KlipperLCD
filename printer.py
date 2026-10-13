@@ -178,8 +178,11 @@ class KlippySocket:
 class MoonrakerSocket:
 	def __init__(self, address, port, api_key):
 		self.s = requests.Session()
+		if api_key:
+			self.s.headers.update({
+				'X-Api-Key': api_key,
+			})
 		self.s.headers.update({
-			'X-Api-Key': api_key,
 			'Content-Type': 'application/json'
 		})
 		self.base_address = 'http://' + address + ':' + str(port)
@@ -390,10 +393,13 @@ class PrinterData:
 							self.file_path = status['configfile']['config']['virtual_sdcard']['path']
 
 	def init_features(self):
+		objects = []
 		try:
-			objects = self.getREST('/printer/objects/list')['result']['objects']
-		except:
-			print("Could not read printer features objects!")
+			res = self.getREST('/printer/objects/list')
+			if res and 'result' in res and 'objects' in res['result']:
+				objects = res['result']['objects']
+		except Exception as e:
+			print(f"Could not read printer features objects: {e}")
 		
 		for obj in objects:
 			if 'led' in obj:
