@@ -64,24 +64,52 @@ class KlipperLCD ():
         for net_macro in ["GET_IP", "WIFI_STATUS", "WIFI_SCAN", "WIFI_CONNECT"]:
             if net_macro not in macros:
                 macros.append(net_macro)
+        self.macros = macros
         self.lcd.write_macros(macros)
 
-        primary_ip = self.net_helper.get_primary_ip()
+        self.primary_ip = self.net_helper.get_primary_ip()
         print(self.printer.MACHINE_SIZE)
         print(self.printer.SHORT_BUILD_VERSION)
         self.lcd.write("information.size.txt=\"%s\"" % self.printer.MACHINE_SIZE)
-        self.lcd.write("information.sversion.txt=\"%s (%s)\"" % (self.printer.SHORT_BUILD_VERSION, primary_ip))
+        self.lcd.write("information.sversion.txt=\"%s (%s)\"" % (self.printer.SHORT_BUILD_VERSION, self.primary_ip))
         self.lcd.write("page main")
 
         # Display greeting with network IP in LCD console
-        self.write_console_lines(f"KlipperLCD ready\nIP: {primary_ip}")
+        self.write_console_lines(f"KlipperLCD ready\nIP: {self.primary_ip}")
+        self.lcd.screen_ready = True
+        self._last_reinit_time = time.time()
 
     def start(self):
         print("KlipperLCD start")
         self.running = True
         Thread(target=self.periodic_update).start()
 
-    def update(self):
+    def reinit_screen(self):
+        now = time.time()
+        if now - getattr(self, "_last_reinit_time", 0) < 1.5:
+            return
+        self._last_reinit_time = now
+        print("Reinitializing screen display...")
+        try:
+            self.primary_ip = self.net_helper.get_primary_ip()
+            version_str = f"{self.printer.SHORT_BUILD_VERSION} ({self.primary_ip})"
+            is_printing = (self.printer.getState() in ("printing", "paused", "pausing"))
+            self.lcd.reinit_display(
+                machine_size=self.printer.MACHINE_SIZE,
+                version=version_str,
+                macros=self.macros,
+                is_printing=is_printing,
+                file_name=self.printer.file_name or "",
+                percent=self.printer.getPercent()
+            )
+            time.sleep(0.05)
+            self.write_console_lines(f"KlipperLCD ready\nIP: {self.primary_ip}")
+            self.update(force=True)
+            print("Screen reinitialization complete")
+        except Exception as e:
+            print("Error during screen reinitialization:", e)
+
+    def update(self, force=False):
         if self.wait_probe:
             print("Zpos=%f, Zoff=%f" % (self.printer.current_position.z, self.printer.BABY_Z_VAR))
             if self.printer.ishomed():
@@ -115,11 +143,23 @@ class KlipperLCD ():
         data.minimum_cruise_ratio   = self.printer.minimum_cruise_ratio
         data.square_corner_velocity = self.printer.square_corner_velocity
 
-        self.lcd.data_update(data)
+        self.lcd.data_update(data, force=force)
 
     def periodic_update(self):
         while self.running:
-            self.update()
+            try:
+                now = time.time()
+                if now - self.lcd.last_rx_time > 6.0 and self.lcd.screen_ready:
+                    print("Screen silence detected (>6s), marking screen as disconnected")
+                    self.lcd.screen_ready = False
+
+                if not self.lcd.screen_ready:
+                    self.reinit_screen()
+                else:
+                    self.update()
+                    self.lcd.ping()
+            except Exception as e:
+                print("Error in periodic_update:", e)
             time.sleep(2)
 
     def write_console_lines(self, text):
@@ -349,6 +389,9 @@ class KlipperLCD ():
             cmd = data.strip() if data else ""
             if not self.handle_network_console_cmd(cmd):
                 self.printer.sendGCode(data)
+        elif evt == self.lcd.evt.SCREEN_BOOT:
+            print("SCREEN_BOOT event received -> triggering screen reinitialization")
+            self.reinit_screen()
         else:
             print("lcd_callback event not recognised %d" % evt)
 
@@ -362,3 +405,9 @@ if __name__ == "__main__":
         wifi_iface=args.wifi_iface
     )
     x.start()
+    try:
+        while x.running:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("Stopping KlipperLCD...")
+        x.running = False

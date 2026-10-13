@@ -1,4 +1,5 @@
 import binascii
+import time
 from time import sleep
 from threading import Thread
 from array import array
@@ -33,6 +34,7 @@ RX_STATE_IDLE = 0
 RX_STATE_READ_LEN = 1
 RX_STATE_READ_CMD = 2
 RX_STATE_READ_DAT = 3
+RX_STATE_NEXTION  = 4
 
 PLA   = 0
 ABS   = 1
@@ -99,6 +101,7 @@ class LCDEvents():
     SQUARE_CORNER_VELOCITY = 27
     THUMBNAIL      = 28
     CONSOLE        = 29
+    SCREEN_BOOT    = 30
 
 
 class LCD:
@@ -155,6 +158,8 @@ class LCD:
         self.preset_bed_temp = [ 60, 100,   70,  60,  60]
         self.preset_index    = 0
         # UART communication parameters
+        self.port = port
+        self.baud = baud
         self.ser = serial.Serial()
         self.ser.port = port
         self.ser.baudrate = baud
@@ -187,6 +192,8 @@ class LCD:
         # Thumbnail
         self.is_thumbnail_written = False
         self.askprint = False
+        self.screen_ready = False
+        self.last_rx_time = time.time()
         # Make sure the serial port closes when you quit the program.
         atexit.register(self._atexit)
 
@@ -196,20 +203,43 @@ class LCD:
     
     def start(self, *args, **kwargs):
         self.running = True
-        self.ser.open()
-        Thread(target=self.run).start()
+        try:
+            if not self.ser.is_open:
+                self.ser.open()
+        except Exception as e:
+            print("Serial open error on start:", e)
+        Thread(target=self.run, daemon=True).start()
 
-        #self.write(b'page boot')
         self.write("page boot")
         self.write(b'com_star')
         self.write(b'main.va0.val=1')
         self.write("boot.j0.val=1")
         self.write("boot.t0.txt=\"KlipperLCD.service starting...\"")
-        #self.write("page main")
     
+    def reinit_display(self, machine_size, version, macros=None, is_printing=False, file_name="", percent=0):
+        self.write("boot.j0.val=1")
+        self.write("boot.t0.txt=\"Connected!\"")
+        self.write(b"com_star")
+        self.write(b"main.va0.val=1")
+        self.write("information.size.txt=\"%s\"" % machine_size)
+        self.write("information.sversion.txt=\"%s\"" % version)
+        if macros:
+            self.write_macros(macros)
+        if is_printing:
+            self.write("page printpause")
+            self.write("printpause.t0.txt=\"%s\"" % file_name)
+            self.write("printpause.printprocess.val=%d" % percent)
+            self.write("printpause.printvalue.txt=\"%d\"" % percent)
+        else:
+            self.write("page main")
+        self.screen_ready = True
+
     def boot_progress(self, progress):
         self.write("boot.t0.txt=\"Waiting for Klipper...\"")
         self.write("boot.j0.val=%d" % progress)
+
+    def ping(self):
+        self.write("sendme")
 
     def about_machine(self, size, fw):
         print("Machine size: " + self.printer.MACHINE_SIZE)
@@ -218,6 +248,8 @@ class LCD:
         self.write("information.sversion.txt=\"%s\"" % fw)        
 
     def write(self, data, eol=True, lf=False):
+        if not self.ser or not self.ser.is_open:
+            return
         dat = bytearray()
         if type(data) == str:
            dat.extend(data.encode("utf-8"))
@@ -229,9 +261,12 @@ class LCD:
             dat.extend(dat[-1:])
             dat[len(dat)-2] = 10 #'\r'
             dat[len(dat)-3] = 13 #'\n'
-        self.ser.write(dat)
-        if eol:
-            self.ser.write(bytearray([0xFF, 0xFF, 0xFF]))
+        try:
+            self.ser.write(dat)
+            if eol:
+                self.ser.write(bytearray([0xFF, 0xFF, 0xFF]))
+        except Exception as e:
+            print("Serial write error:", e)
 
     def clear_thumbnail(self):
         self.write("printpause.cp0.close()")
@@ -360,17 +395,17 @@ class LCD:
             self.write("macro.cb0.path+=\"%s\"" % macro, lf = line_feed)
 
 
-    def data_update(self, data):
+    def data_update(self, data, force=False):
         #print("data.state: %s self.printer.state: %s" % (data.state, self.printer.state))
-        if data.hotend_target != self.printer.hotend_target:
+        if force or data.hotend_target != self.printer.hotend_target:
             self.write("pretemp.nozzle.txt=\"%d\"" % data.hotend_target)
-        if data.bed_target != self.printer.bed_target:
+        if force or data.bed_target != self.printer.bed_target:
             self.write("pretemp.bed.txt=\"%d\"" % data.bed_target)
-        if data.hotend != self.printer.hotend or data.hotend_target != self.printer.hotend_target:
+        if force or data.hotend != self.printer.hotend or data.hotend_target != self.printer.hotend_target:
             self.write("main.nozzletemp.txt=\"%d / %d\"" % (data.hotend, data.hotend_target))
-        if data.bed != self.printer.bed or data.bed_target != self.printer.bed_target:
+        if force or data.bed != self.printer.bed or data.bed_target != self.printer.bed_target:
             self.write("main.bedtemp.txt=\"%d / %d\"" % (data.bed, data.bed_target))
-        if data.led != self.printer.led:
+        if force or data.led != self.printer.led:
             if(data.led > 0):
                 self.light=True
                 self.write("status_led2=1")
@@ -378,7 +413,7 @@ class LCD:
                 self.light=False
                 self.write("status_led2=0")
 
-        if data.fan != self.printer.fan:
+        if force or data.fan != self.printer.fan:
             if(data.fan > 0):
                 self.fan=True
                 self.write("set.va0.val=1")
@@ -400,26 +435,17 @@ class LCD:
                     self.write("page leveldata_36")
                     self.leveling_step = None
 
-
-
-        #if self.speed_adjusting == 'PrintSpeed' and data.feedrate != self.printer.feedrate:
-        #    self.write("adjustspeed.targetspeed.val=%d" % data.feedrate)
-        #elif self.speed_adjusting == 'Flow' and data.flowrate != self.printer.flowrate:
-        #    self.write("adjustspeed.targetspeed.val=%d" % data.flowrate)
-        #elif self.speed_adjusting == 'Fan' and data.fan != self.printer.fan:
-        #    self.write("adjustspeed.targetspeed.val=%d" % data.fan)
-
         if self.adjusting_max:
-            if data.max_accel != self.printer.max_accel:
+            if force or data.max_accel != self.printer.max_accel:
                 self.write("speed_settings.accel.val=%d" % data.max_accel)
-            if data.minimum_cruise_ratio != self.printer.minimum_cruise_ratio:
+            if force or data.minimum_cruise_ratio != self.printer.minimum_cruise_ratio:
                 self.write("speed_settings.accel_to_decel.val=%d" % int(data.minimum_cruise_ratio*100))
-            if data.max_velocity != self.printer.max_velocity:
+            if force or data.max_velocity != self.printer.max_velocity:
                 self.write("speed_settings.velocity.val=%d" % data.max_velocity)
-            if data.square_corner_velocity != self.printer.square_corner_velocity:
+            if force or data.square_corner_velocity != self.printer.square_corner_velocity:
                 self.write("speed_settings.sqr_crnr_vel.val=%d" % int(data.square_corner_velocity*10))
 
-        if data.state != self.printer.state:
+        if force or data.state != self.printer.state:
                 print("Printer state: %s" % data.state)
                 if data.state == "printing":
                     print("Ongoing print detected")
@@ -444,7 +470,7 @@ class LCD:
                 elif (data.state == "standby"):
                     self.is_thumbnail_written = False
 
-        if data != self.printer:
+        if force or data != self.printer:
             self.printer = data
 
     def probe_mode_start(self):
@@ -458,52 +484,96 @@ class LCD:
 
     def run(self):
         while self.running:
-                try:
-                    incomingByte = self.ser.read(1)
-                except Exception:
-                    sleep(0.05)
-                    continue
+            try:
+                if not self.ser or not self.ser.is_open:
+                    try:
+                        if self.ser:
+                            try:
+                                self.ser.close()
+                            except Exception:
+                                pass
+                        self.ser = serial.Serial(self.port, self.baud, timeout=1.0)
+                        print("Serial port %s opened successfully" % self.port)
+                    except Exception:
+                        sleep(1.0)
+                        continue
+
+                incomingByte = self.ser.read(1)
                 if not incomingByte:
                     continue
-                #
+
+                self.last_rx_time = time.time()
+
                 if self.rx_state == RX_STATE_IDLE:
                     if incomingByte[0] == FHONE:
+                        self.rx_buf.clear()
                         self.rx_buf.extend(incomingByte)
                     elif incomingByte[0] == FHTWO:
-                        if self.rx_buf[0] == FHONE:
+                        if len(self.rx_buf) == 1 and self.rx_buf[0] == FHONE:
                             self.rx_buf.extend(incomingByte)
                             self.rx_state = RX_STATE_READ_LEN
                         else:
                             self.rx_buf.clear()
-                            print("Unexpected header received: 0x%02x ()" % incomingByte[0])         
+                    elif incomingByte[0] in (0x66, 0x65, 0x00, 0x1a):
+                        self.rx_buf.clear()
+                        self.rx_buf.extend(incomingByte)
+                        self.rx_state = RX_STATE_NEXTION
                     else:
                         self.rx_buf.clear()
                         self.error_from_lcd = True
-                        print("Unexpected data received: 0x%02x" % incomingByte[0])
-                #
+
+                elif self.rx_state == RX_STATE_NEXTION:
+                    self.rx_buf.extend(incomingByte)
+                    if len(self.rx_buf) >= 4 and self.rx_buf[-3:] == bytearray([0xFF, 0xFF, 0xFF]):
+                        pkg_type = self.rx_buf[0]
+                        if pkg_type == 0x66: # sendme response: 0x66 <page_id> 0xFF 0xFF 0xFF
+                            page_id = self.rx_buf[1]
+                            self.screen_ready = True
+                            if page_id == 0:
+                                print("Screen reported page 0 (boot) -> triggering SCREEN_BOOT")
+                                self.callback(self.evt.SCREEN_BOOT)
+                        self.rx_buf.clear()
+                        self.rx_state = RX_STATE_IDLE
+                    elif len(self.rx_buf) > 30:
+                        self.rx_buf.clear()
+                        self.rx_state = RX_STATE_IDLE
+
                 elif self.rx_state == RX_STATE_READ_LEN:
-                    # Check if len is as expected, seems to alway be 6 bytes?
-                    #if incomingByte[0] == FHLEN:
                     self.rx_buf.extend(incomingByte) # Read length
-                    self.rx_state = RX_STATE_READ_DAT
-                    #else:
-                    #    self.rx_buf.clear()
-                    #    self.rx_state = RX_STATE_IDLE
-                    #    print("Unexpected len param received: 0x%02x" % incomingByte[0])
-                #
+                    bytelen = incomingByte[0]
+                    if bytelen < 3 or bytelen > 250:
+                        self.rx_buf.clear()
+                        self.rx_state = RX_STATE_IDLE
+                    else:
+                        self.rx_state = RX_STATE_READ_DAT
+
                 elif self.rx_state == RX_STATE_READ_DAT:
                     self.rx_buf.extend(incomingByte)
                     self.rx_data_cnt += 1
-                    len = self.rx_buf[2]
-                    if self.rx_data_cnt >= len:
-                        # New command/message received from display
+                    len_expected = self.rx_buf[2]
+                    if self.rx_data_cnt >= len_expected:
                         cmd = self.rx_buf[3]
-                        data = self.rx_buf[-(len-1):] # Remove header and command
-                        # Handle incoming data
-                        self._handle_command(cmd, data)
+                        data = self.rx_buf[-(len_expected-1):] # Remove header and command
+                        try:
+                            self._handle_command(cmd, data)
+                        except Exception as e:
+                            print("Error handling LCD command:", e)
                         self.rx_buf.clear()
                         self.rx_data_cnt = 0
                         self.rx_state = RX_STATE_IDLE
+
+            except (serial.SerialException, OSError) as e:
+                print("Serial exception in LCD reader:", e)
+                self.screen_ready = False
+                try:
+                    if self.ser:
+                        self.ser.close()
+                except Exception:
+                    pass
+                sleep(1.0)
+            except Exception as e:
+                print("Unexpected error in LCD reader loop:", e)
+                sleep(0.05)
 
     def _handle_command(self, cmd, dat):
         if cmd == CMD_WRITEVAR: #0x82
@@ -531,8 +601,8 @@ class LCD:
     def _handle_readvar(self, addr, data):
         if addr in self.addr_func_map:
             # Call function corresponding with addr
-            if (self.addr_func_map[addr].__name__ == "_BedLevelFun" and data[0] == 0x0a):
-                pass ## Avoid to spam the log file while printing
+            if self.addr_func_map[addr].__name__ == "_BedLevelFun" and data[0] in (0x0a, 0x0b) and self.screen_ready:
+                pass ## Avoid spamming the log file while printing / idling
             else:
                 print("%s: len: %d data[0]: %x" % (self.addr_func_map[addr].__name__, len(data), data[0]))
             self.addr_func_map[addr](data)
@@ -957,7 +1027,9 @@ class LCD:
             #self.write("page warn_zoffset")
 
         elif data[0] == 0x0a:
-            #status = self.callback(self.evt.PRINT_STATUS)
+            if not self.screen_ready:
+                print("Screen sent 0x0a while unready -> triggering SCREEN_BOOT")
+                self.callback(self.evt.SCREEN_BOOT)
             self.write("printpause.printspeed.txt=\"%d\"" % self.printer.feedrate)
             self.write("printpause.fanspeed.txt=\"%d\"" % self.printer.fan)
             self.write("printpause.zvalue.val=%d" % (int)(self.printer.z_pos*10))
@@ -966,13 +1038,12 @@ class LCD:
             self.write("printpause.printvalue.txt=\"%d\"" % self.printer.percent)
 
         elif data[0] == 0x0b:
-            pass # Screen requesting nozzle and bed temp
+            if not self.screen_ready:
+                print("Screen sent 0x0b while unready -> triggering SCREEN_BOOT")
+                self.callback(self.evt.SCREEN_BOOT)
         elif data[0] == 0x0c:
-            pass
-            #self.write(b'tm0.en=0')
-            #self.write(b'va0.val=0')
-            #self.write(b'tm1.en=1')
-            #self.write(b'main.va0.val=1') #Plus:2 Pro:1 Max:3
+            print("Screen sent 0x0c boot packet -> triggering SCREEN_BOOT")
+            self.callback(self.evt.SCREEN_BOOT)
         elif data[0] == 0x16:
             self.write("main.va0.val=1")
             self.write("printpause.t0.txt=\"%s\"" % self.printer.file_name)
@@ -1135,6 +1206,9 @@ class LCD:
         self.write("tempsetvalue.bedtemp.val=%d" % self.preset_bed_temp[material])
     
     def _HardwareTest(self, data):
+        if not self.screen_ready:
+            print("HardwareTest received while unready -> triggering SCREEN_BOOT")
+            self.callback(self.evt.SCREEN_BOOT)
         if data[0] == 0x0f: # Hardware test page
             pass #Always requested on main page load, ignore
         else:
