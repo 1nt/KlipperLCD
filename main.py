@@ -270,18 +270,36 @@ class KlipperLCD ():
                 return
 
             f.close()
-            thumbnail_found = False
-            b64 = ""
+            thumbnails = {}
+            cur_header = None
+            cur_b64 = []
 
             for line in buf:
                 if 'thumbnail begin' in line:
-                    thumbnail_found = True
+                    cur_header = line
+                    cur_b64 = []
                 elif 'thumbnail end' in line:
-                    thumbnail_found = False
-                    break
-                elif thumbnail_found:
-                    b64 += line.strip(' \t\n\r;')
-        
+                    if cur_header and cur_b64:
+                        parts = cur_header.split()
+                        size_str = next((p for p in parts if 'x' in p and p[0].isdigit()), '')
+                        if size_str:
+                            try:
+                                w, h = map(int, size_str.split('x'))
+                                thumbnails[(w, h)] = ''.join(cur_b64)
+                            except Exception:
+                                pass
+                    cur_header = None
+                    cur_b64 = []
+                elif cur_header is not None:
+                    cur_b64.append(line.strip(' \t\n\r;'))
+
+            b64 = ''
+            if (160, 160) in thumbnails:
+                b64 = thumbnails[(160, 160)]
+            elif thumbnails:
+                best_size = max(thumbnails.keys(), key=lambda s: s[0] * s[1])
+                b64 = thumbnails[best_size]
+
             if len(b64):
                 # Decode Base64
                 img = base64.b64decode(b64)        

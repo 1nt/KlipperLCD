@@ -242,5 +242,21 @@ WIFI_CONNECT SSID="Keenetic" PASS="secret_password"
 
 ---
 
+## 8. Slicer Thumbnail Configuration (OrcaSlicer / PrusaSlicer)
+
+To display crisp, pixel-perfect thumbnails on the touchscreen:
+1. Open your Slicer (**OrcaSlicer** / **PrusaSlicer** / **Bambu Studio**).
+2. Go to **Printer Settings** -> **General** -> **Thumbnails**.
+3. Set the thumbnail resolution to:
+   ```text
+   160x160/PNG, 32x32/PNG
+   ```
+   * **`160x160`**: Pixel-perfect native resolution for the KlipperLCD preview window.
+   * **`32x32`**: Compact icon for the file table in Mainsail / Fluidd.
+
+KlipperLCD automatically detects all embedded thumbnails, selects the optimal `160x160` image, and renders transparency and dark models smoothly with Lanczos antialiasing.
+
+---
+
 ## License
 Apache-2.0 License. Based on [joakimtoe/KlipperLCD](https://github.com/joakimtoe/KlipperLCD).

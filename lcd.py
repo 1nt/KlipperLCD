@@ -279,10 +279,10 @@ class LCD:
         self.clear_thumbnail()
 
         # Open as image
-        im = Image.open(BytesIO(img))
+        im = Image.open(BytesIO(img)).convert("RGBA")
         width, height = im.size
         if width != 160 or height != 160:
-            im = im.resize((160, 160))
+            im = im.resize((160, 160), Image.Resampling.LANCZOS)
             width, height = im.size
 
         pixels = im.load()
@@ -291,12 +291,15 @@ class LCD:
         for i in range(height): #Height
             for j in range(width): #Width
                 r, g, b, a = pixels[j, i]
-                r = r >> 3
-                g = g >> 2
-                b = b >> 3
-                rgb = (r << 11) | (g << 5) | b
-                if rgb == 0x0000:
+                if a < 128:
                     rgb = 0x4AF0
+                else:
+                    r = r >> 3
+                    g = g >> 2
+                    b = b >> 3
+                    rgb = (r << 11) | (g << 5) | b
+                    if rgb == 0x0000:
+                        rgb = 0x0821
                 color16.append(rgb)
 
         output_data = bytearray(height * width * 10)
