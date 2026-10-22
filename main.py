@@ -49,6 +49,8 @@ class KlipperLCD ():
         self.wait_probe = False
         self.thumbnail_inprogress = False
         self.net_helper = NetworkHelper(iface=wifi_iface)
+        self.wifi_wizard_step = 0
+        self.wifi_wizard_target = None
 
         progress_bar = 1
         while self.printer.update_variable() == False:
@@ -89,6 +91,8 @@ class KlipperLCD ():
         if now - getattr(self, "_last_reinit_time", 0) < 1.5:
             return
         self._last_reinit_time = now
+        self.wifi_wizard_step = 0
+        self.wifi_wizard_target = None
         print("Reinitializing screen display...")
         try:
             self.primary_ip = self.net_helper.get_primary_ip()
@@ -194,9 +198,7 @@ class KlipperLCD ():
     def run_net_wifi_connect(self, cmd):
         target, password = parse_connect_args(cmd)
         if not target:
-            usage = "Usage: WIFI_CONNECT ID=1 PASS=\"pass\""
-            self.lcd.write_console(usage)
-            self.printer.sendGCode(f'RESPOND TYPE=error MSG="{usage}"')
+            self.start_wifi_wizard()
             return
 
         self.lcd.write_console(f"Connecting to {target}...")
@@ -207,20 +209,130 @@ class KlipperLCD ():
             if line.strip():
                 self.printer.sendGCode(f'RESPOND MSG="{line.strip()}"')
 
+    def start_wifi_wizard(self):
+        self.wifi_wizard_step = 1
+        self.wifi_wizard_target = None
+
+        if not self.net_helper.last_scan:
+            self.lcd.write_console("[WiFi Setup] Scanning...")
+            self.printer.sendGCode('RESPOND MSG="[WiFi Setup] Scanning..."')
+            res = self.net_helper.scan_wifi()
+            self.write_console_lines(res)
+        else:
+            self.lcd.write_console("--- WiFi Setup ---")
+            for idx in sorted(self.net_helper.last_scan.keys(), key=int):
+                ssid = self.net_helper.last_scan[idx]
+                is_open = self.net_helper.is_network_open(idx)
+                lock = " [open]" if is_open else ""
+                self.lcd.write_console(f"{idx}: {ssid}{lock}")
+
+        prompt = "Enter network ID (1-7) or CANCEL:"
+        self.lcd.write_console(prompt)
+        self.printer.sendGCode(f'RESPOND MSG="{prompt}"')
+        time.sleep(0.4)
+        self.lcd.write('kbd.t0.txt=""')
+        self.lcd.write("page kbd")
+
+    def run_net_wifi_connect_or_wizard(self, cmd):
+        target, password = parse_connect_args(cmd)
+        if target:
+            self.run_net_wifi_connect(cmd)
+        else:
+            self.start_wifi_wizard()
+
+    def handle_wifi_wizard_input(self, text):
+        val = text.strip()
+        if val.upper() in ("CANCEL", "QUIT", "EXIT", "ABORT", "Q", "0"):
+            self.wifi_wizard_step = 0
+            self.wifi_wizard_target = None
+            msg = "WiFi setup cancelled."
+            self.lcd.write_console(msg)
+            self.printer.sendGCode(f'RESPOND MSG="{msg}"')
+            return True
+
+        if self.wifi_wizard_step == 1:
+            parts = val.split(maxsplit=1)
+            if len(parts) == 2:
+                target, password = parts[0], parts[1]
+                ssid = self.net_helper.resolve_ssid(target) or target
+                self.wifi_wizard_step = 0
+                self.wifi_wizard_target = None
+                Thread(target=self.run_net_wifi_connect, args=(f'WIFI_CONNECT TARGET="{target}" PASS="{password}"',), daemon=True).start()
+                return True
+
+            target = val
+            ssid = self.net_helper.resolve_ssid(target)
+            if not ssid:
+                msg = f"Unknown network '{target}'. Enter 1-7 or CANCEL:"
+                self.lcd.write_console(msg)
+                self.printer.sendGCode(f'RESPOND TYPE=error MSG="{msg}"')
+                time.sleep(0.4)
+                self.lcd.write('kbd.t0.txt=""')
+                self.lcd.write("page kbd")
+                return True
+
+            self.wifi_wizard_target = target
+
+            if self.net_helper.is_network_open(target):
+                self.wifi_wizard_step = 0
+                self.wifi_wizard_target = None
+                msg = f"Connecting to {ssid} (Open)..."
+                self.lcd.write_console(msg)
+                self.printer.sendGCode(f'RESPOND MSG="{msg}"')
+                Thread(target=self.run_net_wifi_connect, args=(f'WIFI_CONNECT TARGET="{target}"',), daemon=True).start()
+                return True
+
+            self.wifi_wizard_step = 2
+            self.lcd.write_console(f"Selected: {ssid}")
+            prompt = "Enter WiFi password (or CANCEL):"
+            self.lcd.write_console(prompt)
+            self.printer.sendGCode(f'RESPOND MSG="Network: {ssid} - {prompt}"')
+            time.sleep(0.4)
+            self.lcd.write('kbd.t0.txt=""')
+            self.lcd.write("page kbd")
+            return True
+
+        elif self.wifi_wizard_step == 2:
+            password = val
+            target = self.wifi_wizard_target
+            ssid = self.net_helper.resolve_ssid(target) or target
+            self.wifi_wizard_step = 0
+            self.wifi_wizard_target = None
+
+            self.lcd.write_console(f"Connecting to {ssid}...")
+            Thread(target=self.run_net_wifi_connect, args=(f'WIFI_CONNECT TARGET="{target}" PASS="{password}"',), daemon=True).start()
+            return True
+
+        return False
+
     def handle_network_console_cmd(self, cmd):
-        c = cmd.upper()
-        if c in ("GET_IP", "IP", "SHOW_IP"):
+        c = cmd.strip()
+        u = c.upper()
+
+        if getattr(self, "wifi_wizard_step", 0) > 0:
+            return self.handle_wifi_wizard_input(c)
+
+        if u in ("GET_IP", "IP", "SHOW_IP"):
             Thread(target=self.run_net_get_ip, daemon=True).start()
             return True
-        elif c in ("WIFI_SCAN", "SCAN_WIFI"):
+        elif u in ("WIFI_SCAN", "SCAN_WIFI"):
             Thread(target=self.run_net_wifi_scan, daemon=True).start()
             return True
-        elif c in ("WIFI_STATUS", "STATUS_WIFI"):
+        elif u in ("WIFI_STATUS", "STATUS_WIFI"):
             Thread(target=self.run_net_wifi_status, daemon=True).start()
             return True
-        elif c.startswith("WIFI_CONNECT"):
-            Thread(target=self.run_net_wifi_connect, args=(cmd,), daemon=True).start()
+        elif u.startswith("WIFI_CONNECT") or u.startswith("CONNECT_WIFI") or u.startswith("CONNECT ") or u.startswith("WIFI "):
+            Thread(target=self.run_net_wifi_connect_or_wizard, args=(cmd,), daemon=True).start()
             return True
+
+        # Short syntax: "1 mypass" or "MySSID mypass"
+        parts = c.split(maxsplit=1)
+        if parts and len(parts) >= 1 and (parts[0] in self.net_helper.last_scan or (parts[0].isdigit() and int(parts[0]) in range(1, 10))):
+            target, password = parse_connect_args(cmd)
+            if target:
+                Thread(target=self.run_net_wifi_connect, args=(cmd,), daemon=True).start()
+                return True
+
         return False
 
     def printer_callback(self, data, data_type):
@@ -236,7 +348,7 @@ class KlipperLCD ():
                 Thread(target=self.run_net_wifi_status, daemon=True).start()
                 return
             elif clean.startswith("__KLIPPERLCD_NET_WIFI_CONNECT__"):
-                Thread(target=self.run_net_wifi_connect, args=(clean,), daemon=True).start()
+                Thread(target=self.run_net_wifi_connect_or_wizard, args=(clean,), daemon=True).start()
                 return
 
         msg = self.lcd.format_console_data(data, data_type)

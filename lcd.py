@@ -614,6 +614,7 @@ class LCD:
 
     def _Console(self, data):
         if data[0] == 0x01: # Back
+            self.callback(self.evt.CONSOLE, "CANCEL")
             state = self.printer.state
             if state == "printing" or state == "paused" or state == "pausing":
                 self.write("page printpause")

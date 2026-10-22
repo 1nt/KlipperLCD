@@ -6,7 +6,7 @@ import os
 import re
 
 def parse_connect_args(cmd_str):
-    s = re.sub(r'^(WIFI_CONNECT|__KLIPPERLCD_NET_WIFI_CONNECT__)\s*', '', cmd_str, flags=re.IGNORECASE).strip()
+    s = re.sub(r'^(WIFI_CONNECT|__KLIPPERLCD_NET_WIFI_CONNECT__|CONNECT_WIFI|CONNECT|WIFI)\s*', '', cmd_str, flags=re.IGNORECASE).strip()
     if not s:
         return "", ""
 
@@ -37,6 +37,7 @@ def parse_connect_args(cmd_str):
 class NetworkHelper:
     def __init__(self, iface=None):
         self.last_scan = {}  # str(idx) -> ssid
+        self.last_scan_details = {}  # str(idx) -> {"ssid": ..., "is_open": ...}
         self.wlan_iface = iface or self._detect_wlan_iface()
 
     def _detect_wlan_iface(self):
@@ -200,15 +201,39 @@ class NetworkHelper:
 
         sorted_networks = sorted(dedup.values(), key=lambda x: x["signal"], reverse=True)
         self.last_scan = {}
+        self.last_scan_details = {}
 
         res_lines = ["--- WiFi Networks ---"]
         for idx, net in enumerate(sorted_networks[:7], 1):
-            self.last_scan[str(idx)] = net["ssid"]
-            lock = " [open]" if "WPA" not in net["flags"] else ""
+            s_idx = str(idx)
+            is_open = "WPA" not in net["flags"]
+            self.last_scan[s_idx] = net["ssid"]
+            self.last_scan_details[s_idx] = {
+                "ssid": net["ssid"],
+                "is_open": is_open,
+                "signal": net["signal"]
+            }
+            lock = " [open]" if is_open else ""
             res_lines.append(f"{idx}: {net['ssid']} ({net['signal']}dBm{lock})")
 
         res_lines.append("Use: WIFI_CONNECT ID=1 PASS=...")
         return "\n".join(res_lines)
+
+    def is_network_open(self, target):
+        target = str(target).strip()
+        if hasattr(self, "last_scan_details") and target in self.last_scan_details:
+            return self.last_scan_details[target].get("is_open", False)
+        if hasattr(self, "last_scan_details"):
+            for d in self.last_scan_details.values():
+                if d.get("ssid") == target:
+                    return d.get("is_open", False)
+        return False
+
+    def resolve_ssid(self, target):
+        target = str(target).strip()
+        if target in self.last_scan:
+            return self.last_scan[target]
+        return target if not target.isdigit() else ""
 
     def connect_wifi(self, target, password=None):
         target = str(target).strip()
