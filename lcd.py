@@ -630,19 +630,21 @@ class LCD:
             files = self.callback(self.evt.FILES)
             self.files = files
             if (files):
-                i = 0
-                for file in files:
-                    print(file)
-                    page_num = ((i / 5) + 1)
-                    self.write("file%d.t%d.txt=\"%s\"" % (page_num, i, file))
-                    i += 1
+                for i in range(0, MaxFileNumber):
+                    page_num = int(i // 5) + 1
+                    if i < len(files):
+                        clean_name = files[i].replace('"', "'")
+                        self.write("file%d.t%d.txt=\"%s\"" % (page_num, i, clean_name))
+                    else:
+                        # Clear old/deleted file slots
+                        self.write("file%d.t%d.txt=\"\"" % (page_num, i))
                 self.write("page file1")
             else:
                 self.files = False
                 # Clear old files from LCD
                 for i in range(0, MaxFileNumber):
-                        page_num = ((i / 5) + 1)
-                        self.write("file%d.t%d.txt=\"\"" % (page_num, i))              
+                    page_num = int(i // 5) + 1
+                    self.write("file%d.t%d.txt=\"\"" % (page_num, i))              
                 self.write("page nosdcard")
 
         elif data[0] == 2: # Abort print

@@ -517,12 +517,16 @@ class PrinterData:
 	def GetFiles(self, refresh=False):
 		if not self.files or refresh:
 			try:
-				self.files = self.getREST('/server/files/list')["result"]
+				res = self.getREST('/server/files/list')
+				if res and "result" in res:
+					self.files = res["result"]
 			except:
 				print("Exception 418")
 		names = []
-		for fl in self.files:
-			names.append(fl["path"])
+		if self.files:
+			sorted_files = sorted(self.files, key=lambda x: x.get("modified", 0), reverse=True)
+			for fl in sorted_files:
+				names.append(fl["path"])
 		return names
 
 	def update_variable(self):
