@@ -201,9 +201,12 @@ class KlipperLCD ():
             self.start_wifi_wizard()
             return
 
-        self.lcd.write_console(f"Connecting to {target}...")
-        self.printer.sendGCode(f'RESPOND MSG="Connecting to {target}..."')
-        res = self.net_helper.connect_wifi(target, password)
+        def status_update(msg):
+            self.lcd.write_console(msg)
+            self.printer.sendGCode(f'RESPOND MSG="{msg}"')
+
+        status_update(f"Connecting to {target}...")
+        res = self.net_helper.connect_wifi(target, password, status_cb=status_update)
         self.write_console_lines(res)
         for line in res.splitlines():
             if line.strip():
@@ -226,12 +229,13 @@ class KlipperLCD ():
                 lock = " [open]" if is_open else ""
                 self.lcd.write_console(f"{idx}: {ssid}{lock}")
 
-        prompt = "Enter network ID (1-7) or CANCEL:"
+        self.lcd.write_console("----------------------")
+        prompt = "Tap [1] below or enter 1-7:"
         self.lcd.write_console(prompt)
         self.printer.sendGCode(f'RESPOND MSG="{prompt}"')
-        time.sleep(0.4)
-        self.lcd.write('kbd.t0.txt=""')
-        self.lcd.write("page kbd")
+        # Pre-set default '1' in console input box so user can view scan results
+        # without keyboard covering the screen. Tapping [1] opens keyboard with '1'.
+        self.lcd.write('console.t0.txt="1"')
 
     def run_net_wifi_connect_or_wizard(self, cmd):
         target, password = parse_connect_args(cmd)
@@ -284,10 +288,11 @@ class KlipperLCD ():
 
             self.wifi_wizard_step = 2
             self.lcd.write_console(f"Selected: {ssid}")
-            prompt = "Enter WiFi password (or CANCEL):"
-            self.lcd.write_console(prompt)
-            self.printer.sendGCode(f'RESPOND MSG="Network: {ssid} - {prompt}"')
-            time.sleep(0.4)
+            self.lcd.write_console("Enter WiFi password:")
+            self.lcd.write_console("(Auto-tries lowercase & TitleCase)")
+            self.lcd.write_console("(Or prefix with , for lowercase)")
+            self.printer.sendGCode(f'RESPOND MSG="Network: {ssid} - Enter WiFi password:"')
+            time.sleep(1.2)
             self.lcd.write('kbd.t0.txt=""')
             self.lcd.write("page kbd")
             return True

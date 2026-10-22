@@ -5,6 +5,52 @@ import socket
 import os
 import re
 
+def decode_password(raw_pass):
+    if not raw_pass:
+        return ""
+    raw = raw_pass.strip()
+    if any(c.islower() for c in raw):
+        return raw
+    if raw.startswith(","):
+        return raw[1:].lower()
+    if "," in raw:
+        res = []
+        is_lower = False
+        for ch in raw:
+            if ch == ",":
+                is_lower = not is_lower
+            else:
+                res.append(ch.lower() if is_lower else ch.upper())
+        return "".join(res)
+    return raw
+
+def get_password_candidates(password):
+    if not password:
+        return [None]
+    raw = password.strip()
+    if any(c.islower() for c in raw):
+        return [raw]
+
+    if raw.startswith(",") or "," in raw:
+        decoded = decode_password(raw)
+        return [decoded]
+
+    candidates = []
+    # User typed uppercase on screen. Most WiFi passwords are lowercase or TitleCase!
+    if raw.lower() != raw:
+        candidates.append(raw.lower())
+    if raw.capitalize() != raw and raw.capitalize() != raw.lower():
+        candidates.append(raw.capitalize())
+    candidates.append(raw)
+
+    seen = set()
+    result = []
+    for c in candidates:
+        if c not in seen:
+            seen.add(c)
+            result.append(c)
+    return result
+
 def parse_connect_args(cmd_str):
     s = re.sub(r'^(WIFI_CONNECT|__KLIPPERLCD_NET_WIFI_CONNECT__|CONNECT_WIFI|CONNECT|WIFI)\s*', '', cmd_str, flags=re.IGNORECASE).strip()
     if not s:
@@ -233,18 +279,20 @@ class NetworkHelper:
         target = str(target).strip()
         if target in self.last_scan:
             return self.last_scan[target]
+        for ssid in self.last_scan.values():
+            if ssid.lower() == target.lower():
+                return ssid
         return target if not target.isdigit() else ""
 
-    def connect_wifi(self, target, password=None):
+    def connect_wifi(self, target, password=None, status_cb=None):
         target = str(target).strip()
-        ssid = target
-        if target in self.last_scan:
-            ssid = self.last_scan[target]
-        elif target.isdigit() and target not in self.last_scan:
-            return f"Error: Network ID {target} not in scan list. Run WIFI_SCAN first."
-
+        ssid = self.resolve_ssid(target)
         if not ssid:
-            return "Error: SSID is empty. Usage: WIFI_CONNECT SSID=name PASS=pass"
+            if target.isdigit():
+                return f"Error: Network ID {target} not in scan list. Run WIFI_SCAN first."
+            ssid = target
+
+        candidates = get_password_candidates(password)
 
         net_list = self._wpa_cmd("list_networks")
         old_id = None
@@ -253,43 +301,50 @@ class NetworkHelper:
                 old_id = line.split()[0]
                 break
 
-        new_id = self._wpa_cmd("add_network")
-        if not new_id.isdigit():
-            return f"Error adding network: {new_id}"
+        for attempt, cand in enumerate(candidates, 1):
+            if status_cb and len(candidates) > 1:
+                status_cb(f"Connecting ({attempt}/{len(candidates)})...")
 
-        self._wpa_cmd("set_network", new_id, "ssid", f'"{ssid}"')
+            new_id = self._wpa_cmd("add_network")
+            if not new_id.isdigit():
+                return f"Error adding network: {new_id}"
 
-        if password and len(password.strip()) > 0:
-            self._wpa_cmd("set_network", new_id, "psk", f'"{password.strip()}"')
-        else:
-            self._wpa_cmd("set_network", new_id, "key_mgmt", "NONE")
+            self._wpa_cmd("set_network", new_id, "ssid", f'"{ssid}"')
 
-        self._wpa_cmd("enable_network", new_id)
-        self._wpa_cmd("select_network", new_id)
+            if cand and len(cand.strip()) > 0:
+                self._wpa_cmd("set_network", new_id, "psk", f'"{cand.strip()}"')
+            else:
+                self._wpa_cmd("set_network", new_id, "key_mgmt", "NONE")
 
-        connected = False
-        new_ip = None
-        for _ in range(15):
-            time.sleep(1)
-            st = self._wpa_cmd("status")
-            if "wpa_state=COMPLETED" in st:
-                for l in st.splitlines():
-                    if l.startswith("ip_address="):
-                        new_ip = l.split("=", 1)[1]
-                        connected = True
-                        break
+            self._wpa_cmd("enable_network", new_id)
+            self._wpa_cmd("select_network", new_id)
+
+            connected = False
+            new_ip = None
+            for _ in range(12):
+                time.sleep(1)
+                st = self._wpa_cmd("status")
+                if "wpa_state=COMPLETED" in st:
+                    for l in st.splitlines():
+                        if l.startswith("ip_address="):
+                            new_ip = l.split("=", 1)[1]
+                            connected = True
+                            break
+                elif "wpa_state=DISCONNECTED" in st and _ >= 5:
+                    break
+                if connected and new_ip:
+                    break
+
             if connected and new_ip:
-                break
+                self.save_netplan(ssid, cand)
+                return f"Connected to {ssid}!\nIP: {new_ip}"
+            else:
+                self._wpa_cmd("remove_network", new_id)
 
-        if connected and new_ip:
-            self.save_netplan(ssid, password)
-            return f"Connected to {ssid}!\nIP: {new_ip}"
-        else:
-            self._wpa_cmd("remove_network", new_id)
-            if old_id:
-                self._wpa_cmd("select_network", old_id)
-                self._wpa_cmd("enable_network", old_id)
-            return f"Failed to connect to {ssid}.\nRestored previous connection."
+        if old_id:
+            self._wpa_cmd("select_network", old_id)
+            self._wpa_cmd("enable_network", old_id)
+        return f"Failed to connect to {ssid}.\nCheck password or signal."
 
     def save_netplan(self, ssid, password=None):
         try:
